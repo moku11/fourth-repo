@@ -1,0 +1,170 @@
+spark streaming 
+================
+network word count example
+---------------------------
+open spark shell
+write the following code:
+
+sc.stop
+
+import org.apache.spark._
+import org.apache.spark.streaming._
+import org.apache.spark.streaming.StreamingContext._
+
+val conf = new SparkConf().setMaster("local[2]").setAppName("NetworkWordCount")
+val ssc = new StreamingContext(conf, Seconds(10))
+
+val lines = ssc.socketTextStream("localhost", 9999)
+
+val words = lines.flatMap(_.split(" "))
+
+val pairs = words.map(word => (word, 1))
+val wordCounts = pairs.reduceByKey(_ + _)
+
+wordCounts.print()     //wordCount.saveAsTextFile(<hdfs location>)
+
+ssc.start()             // Start the computation
+
+ssc.awaitTermination()  // Wait for the computation to terminate
+
+
+
+open another terminal type nc -lk 9999   hit enter 
+send messages from here 
+
+-----------------------------------------
+spark streaming with gen_logs:
+==============================
+open spark shell 
+type the following code 
+
+sc.stop
+
+
+import org.apache.spark._
+import org.apache.spark.streaming._
+import org.apache.spark.streaming.StreamingContext._
+
+val conf = new SparkConf().setMaster("local[2]").setAppName("access log demo")
+val ssc = new StreamingContext(conf, Seconds(30))
+
+val lines = ssc.socketTextStream("localhost", 9999)
+
+val dept = lines.filter(line=>line.split(" ")(6).split("/")(1) == "department")
+
+
+val x  = dept.map(line=>line.split(" ")(6))
+
+val y = x.map(r=>r.split("/")(2)).map(e=>(e,1)).reduceByKey(_+_)
+
+
+ val y = x.map(r=>r.split("/")(2)).map(e=>(e,1)).reduceByKey(_+_).sortBy(e=>(e._2),false)
+
+y.print()
+
+ssc.start()
+ssc.awaitTermination() 
+
+
+open another terminal 
+cd /opt/gen_logs/
+
+./start_logs.sh 
+
+./tail_logs.sh | nc -lk 9999
+
+
+
+---------------------------------------------
+spark streaming with flume ( network word count with flume)  
+----------------------------------------------
+steps:
+1)open intellijidea 
+2) create scala sbt based project 
+3) open build.sbt file and add the following lines
+
+  build.sbt
+  ---------
+name := "Example4"
+
+version := "0.1"
+
+scalaVersion := "2.11.10"
+
+libraryDependencies += "org.apache.spark" %% "spark-core" % "2.1.0"
+
+libraryDependencies += "org.apache.spark" %% "spark-streaming" % "2.0.1" % "provided"
+
+libraryDependencies += "org.apache.spark" %% "spark-streaming-flume-sink" % "2.1.0"
+
+libraryDependencies += "org.apache.spark" %% "spark-streaming-flume" % "2.1.0"
+
+
+4) create a new scala object by right clicking on the main->scala directory and write the following code 
+
+
+scala object (in intellijidea)
+-------------
+
+import org.apache.spark.SparkConf
+import org.apache.spark.streaming.flume.FlumeUtils
+import org.apache.spark.streaming.{Seconds, StreamingContext}
+object flumewordcount {
+  def main(args: Array[String]): Unit = {
+    val conf = new SparkConf().setMaster("local[2]").setAppName("flume sink")
+    val ssc = new StreamingContext(conf,Seconds(10))
+    val data = FlumeUtils.createPollingStream(ssc,"localhost",6666) .map(x => x.event).map(x => new String(x.getBody.array()))
+    val x = data.flatMap(e=>(e.split(" "))).map(e=>(e,1)).reduceByKey(_+_)
+    x.print()
+   
+    ssc.start()
+    ssc.awaitTermination()
+    }
+}
+
+5) compile and build the jar by sbt package command
+6) move the jar file to cluster
+7) creating flume agent write the flume.conf file 
+   flume.conf (in ubuntu)
+
+tier1.sources  = source1
+tier1.channels = channel1 
+tier1.sinks = spark
+ 
+#tier1.sources.source1.type = exec
+#tier1.sources.source1.command = tail -F /opt/gen_logs/logs/access.log
+
+tier1.sources.source1.type = netcat
+tier1.sources.source1.bind = localhost
+tier1.sources.source1.port = 4444
+tier1.sources.source1.channels = channel1
+ 
+tier1.channels.channel1.type = memory
+tier1.channels.channel1.capacity = 10000
+tier1.channels.channel1.transactionCapacity = 1000
+
+tier1.sinks.spark.type = org.apache.spark.streaming.flume.sink.SparkSink
+tier1.sinks.spark.hostname = localhost
+tier1.sinks.spark.port = 6666
+tier1.sinks.spark.channel = channel1
+
+8) save and close 
+
+9) now run the spark submit command 
+IMP ** note when you running spark submit don't open spark shell if open close the spark shell
+
+10) run the following command 
+
+spark-submit --master local[2] --class flumewordcount /home/hadoop/Desktop/example4_2.11-0.1.jar 
+
+
+11) run the flume agent by using the following command open one more terminal and run flume agent
+
+ flume-ng agent -n tier1 -f /home/hadoop/Desktop/flume/flume_sink_wc.conf
+
+12)open another terminal and open 4444 port 
+
+nc localhost 4444        click on enter and send some messages 
+
+
+   
